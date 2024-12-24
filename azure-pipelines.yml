@@ -1,0 +1,157 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+pool:
+  name: vyshak
+  demands: agent.name -equals agent-1
+  
+  
+stages:
+- stage: Compile
+  displayName: 'compile Stage'
+  jobs:
+  - job: 'complilejob'
+    displayName: 'compile Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    - script: mvn compile
+      displayName: 'compile-step'
+
+
+
+- stage: Testing
+  displayName: 'Test Stage'
+  jobs:
+  - job: 'TestJob'
+    displayName: 'Test Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    - script: mvn test
+      displayName: 'Test Step'
+
+- stage: File_system_scan
+  displayName: 'Trivy FS Stage'
+  jobs:
+  - job: 'TrivyFSJob'
+    displayName: 'Trivy Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    - script: trivy fs --format table -o trivy-fs-report.html .
+      displayName: 'Trivy-FS-Step'
+      
+- stage: SonarQube_Scan
+  displayName: 'SonarQube Stage'
+  jobs:
+  - job: 'SonarQubeJob'
+    displayName: 'Sonar Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    
+    - task: SonarQubePrepare@7
+      inputs:
+        SonarQube: 'sonar'
+        scannerMode: 'cli'
+        configMode: 'manual'
+        cliProjectKey: 'secret-santa'
+        cliProjectName: 'secret-santa'
+        cliSources: '.'
+        extraProperties: |
+          # Additional properties that will be passed to the scanner, 
+          # Put one key=value per line, example:
+          # sonar.exclusions=**/*.bin
+          sonar.java.binaries=.
+    - task: SonarQubeAnalyze@7
+      inputs:
+        jdkversion: 'JAVA_HOME'
+
+- stage: Build_Job
+  displayName: 'Build Stage'
+  jobs:
+  - job: 'BuildJob'
+    displayName: 'Build Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    - script: mvn package
+      displayName: 'Build-package-step'
+      
+- stage: Docker_stage
+  displayName: 'Docker build Stage'
+  jobs:
+  - job: 'DockerJob'
+    displayName: 'Docker Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    - script: mvn package
+      displayName: 'Build-package-step'
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'dockerconnect'
+        repository: 'vyshak24/santa'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        tags: 'latest'
+
+- stage: Trivy_Docker_imagescan
+  displayName: 'Trivy image scan Stage'
+  jobs:
+  - job: 'TrivyimageJob'
+    displayName: 'Trivyimage Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    - script: trivy image --format table -o trivy-img-report.html vyshak24/santa:latest
+      displayName: 'Trivy-Docker-image-scan-step'
+
+- stage: K8_Deploy
+  displayName: 'K8_Deploy_Stage'
+  jobs:
+  - job: 'K8_Deploy_Stage'
+    displayName: 'K8 Deploy Job'
+    pool:
+      name: vyshak
+      demands:
+        - agent.name -equals agent-1
+    steps:
+    - task: KubectlInstaller@0
+      inputs:
+        kubectlVersion: 'latest'
+      
+    - task: Kubernetes@1
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: 'k8sconnect'
+        namespace: 'default'
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'deployment-service.yaml'
+        secretType: 'dockerRegistry'
+        containerRegistryType: 'Container Registry'
+        dockerRegistryEndpoint: 'dockerconnect'
+
+    
+
